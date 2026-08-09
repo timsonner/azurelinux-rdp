@@ -1,0 +1,7 @@
+.git
+.gitignore
+*.md
+!README.md
+home/
+*-home/
+**/*.log

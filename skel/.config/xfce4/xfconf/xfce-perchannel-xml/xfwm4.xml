@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Disable xfwm4 compositor under xorgxrdp (no usable GL). -->
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+    <property name="vblank_mode" type="string" value="off"/>
+  </property>
+</channel>
