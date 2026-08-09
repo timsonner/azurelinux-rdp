@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=XFCE PolKit
+Comment=Policykit Authentication Agent (disabled in container — no logind session)
+Exec=/usr/libexec/xfce-polkit
+Icon=gtk-dialog-authentication
+OnlyShowIn=XFCE;
+# Agent cannot register without a logind session (container has no systemd PID 1).
+# Polkit rules in /etc/polkit-1/rules.d/ grant wheel/azureuser instead.
+Hidden=true
+X-GNOME-Autostart-enabled=false

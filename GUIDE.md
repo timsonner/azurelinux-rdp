@@ -42,10 +42,12 @@ Keep these when basing a new container on this repo:
 |---|---|
 | Slim base + install DE in Dockerfile | Rebuildable; no `commit` / export hacks |
 | `skel/` for `/etc/skel` only | User defaults, not distro “theme packs” |
+| `overlay/` for system files | Polkit rules, autostart tweaks under `/etc` |
 | `startwm.sh` + logout **watchdog** | Avoid black screen after Log Out |
 | `reconnectwm.sh` | Best-effort recovery on reconnect |
 | `KillDisconnected=true` in sesman | Tear down half-dead sessions |
-| Entrypoint DNS fallback + dbus + xrdp | wslc/docker often have broken resolv.conf |
+| Entrypoint DNS + dbus + **polkitd** + xrdp | wslc/docker often have broken resolv.conf |
+| Polkit wheel allow (lab) | No logind session ⇒ avoid PolicyKit popups |
 | Net tools in the image | `ping`, `dig`, `curl`, … work out of the box |
 | X11 only (`xorgxrdp`) | Classic xrdp is not a Wayland path |
 | Lab user with documented password | `azureuser` / `azureuser`; change for non-localhost |
@@ -72,12 +74,14 @@ Keep these when basing a new container on this repo:
 ```text
 azurelinux-rdp/
 ├── Dockerfile                 # Azure base + Fedora fill-in + XFCE + xrdp
-├── docker-entrypoint.sh       # DNS, dbus, xrdp, keep-alive
+├── docker-entrypoint.sh       # DNS, dbus, polkitd, xrdp, keep-alive
 ├── startwm.sh                 # XFCE session + logout watchdog
 ├── reconnectwm.sh             # Reconnect helper
-├── skel/                      # Copied to /etc/skel in the image
+├── skel/                      # → /etc/skel
 │   ├── .Xclients
 │   └── .config/xfce4/…/xfwm4.xml
+├── overlay/                   # → / (system files)
+│   └── etc/polkit-1/rules.d/  # wheel/azureuser lab allow
 ├── README.md
 └── GUIDE.md                   # This file
 ```
@@ -132,6 +136,7 @@ FROM mcr.microsoft.com/azurelinux-beta/base/core:4.0
 | RDP | `xrdp`, `xorgxrdp` |
 | X server | `xorg-x11-server-Xorg`, `xorg-x11-xauth` |
 | XFCE session | `xfce4-session`, `xfwm4`, `xfdesktop`, `xfce4-panel`, `xfce4-settings` |
+| App launcher | `xfce4-appfinder` (Application Finder) |
 | Terminal / FM | `xfce4-terminal`, `thunar` |
 | DNS tools | `bind-utils` |
 | netcat | `nmap-ncat` |
@@ -338,7 +343,7 @@ Same package intent on a host that already has XFCE/xrdp in its repos:
 sudo dnf -y update
 sudo dnf -y install \
   xfce4-session xfwm4 xfdesktop xfce4-panel xfce4-settings \
-  xfce4-terminal thunar \
+  xfce4-appfinder xfce4-terminal thunar \
   xrdp xorgxrdp xorg-x11-server-Xorg \
   iproute iputils bind-utils curl wget
 
@@ -405,12 +410,62 @@ wslc exec azl-rdp bash -c "tail -80 /var/log/xrdp-sesman.log; tail -80 /var/log/
 |---|---|
 | Port in use | Other host port or `wslc remove -f …` |
 | Connection refused | Container running? `wslc list` |
+| **Black / empty screen but login works** | XFCE may be running while GFX encoding fails. Confirm `encoder is nil` in xrdp log → force **RFX only** in `/etc/xrdp/gfx.toml` (image does this at build). Reconnect after fix. |
 | Black screen after logout | Watchdog + `KillDisconnected`; log in again, or `pkill -9 -u azureuser` |
 | Blank/compositor glitches | Confirm xfwm4 compositor off (`skel` → `xfwm4.xml`) |
 | `dnf` can’t resolve | Entrypoint DNS / `--dns 1.1.1.1` |
 | `No match for argument: xfce4-session` | Fedora repo not loaded or arch mismatch; check `fedora43-desktop.repo` |
 | Dependency chaos after layering Fedora | Rebuild clean; tighten `excludepkgs` rather than mutate a running image |
 | Red cgroup/swap warning on `wslc run` | Often harmless if container is **running** |
+
+### Black screen: `encoder is nil` (common)
+
+Symptoms: mstsc connects, session authenticates, **no desktop pixels**. Inside the container, `xfce4-session` / `xfwm4` / `xfdesktop` are running.
+
+Cause: xrdp 0.10 GFX prefers **H.264**, but Fedora/AZL often only has the **`noopenh264` stub** (SONAME present, no real encoder). Log spam:
+
+```text
+xrdp_mm_egfx_frame_ack: encoder is nil
+```
+
+Fix (baked into the Dockerfile):
+
+```toml
+# /etc/xrdp/gfx.toml
+[codec]
+order = [ "RFX" ]
+```
+
+Also install `startwm.sh` to **`/usr/libexec/xrdp/startwm.sh`** — Fedora’s `startwm-bash.sh` sources that path, not only `/etc/xrdp/startwm.sh`.
+
+Quick live check:
+
+```powershell
+wslc exec azl-rdp bash -c "pgrep -a xfce4-session; pgrep -a xfwm4; grep -i encoder /var/log/xrdp.log | tail -5; cat /etc/xrdp/gfx.toml"
+```
+
+### XFCE PolicyKit / “Authentication is required” popup
+
+**Cause (container):** PID 1 is not systemd, so **logind does not track the xrdp session**. Polkit then sees `subject.active == false`, and `xfce-polkit` fails with:
+
+```text
+polkit_agent_listener_register_with_options: assertion 'POLKIT_IS_SUBJECT (subject)' failed
+```
+
+XFCE session / Thunar / power actions then show PolicyKit error dialogs.
+
+**Fix (baked into the image):**
+
+1. `/etc/polkit-1/rules.d/49-azureuser-nopasswd.rules` — `wheel` / `azureuser` → `YES` (lab only).  
+2. Entrypoint starts **polkitd** (and best-effort **systemd-logind**).  
+3. `xfce-polkit.desktop` autostart set **Hidden** (agent cannot register without a real logind session; rules replace it).
+
+After rebuild, re-login once. On a running container without rebuild:
+
+```powershell
+wslc exec azl-rdp bash -c "cat /etc/polkit-1/rules.d/49-azureuser-nopasswd.rules; pgrep -a polkitd"
+# then disconnect RDP and log in again
+```
 
 ---
 

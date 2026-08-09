@@ -1,0 +1,15 @@
+/* Azure Linux XFCE RDP container (lab).
+ *
+ * Without systemd as PID 1, logind does not track xrdp sessions, so:
+ *   - subject.active / subject.local are false
+ *   - xfce-polkit cannot register (POLKIT_IS_SUBJECT fails)
+ *   - desktop actions pop "Authentication is required…" / PolicyKit errors
+ *
+ * Allow the lab user group to proceed without interactive auth.
+ * Do NOT ship this rule on multi-user production hosts.
+ */
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel") || subject.user == "azureuser") {
+        return polkit.Result.YES;
+    }
+});

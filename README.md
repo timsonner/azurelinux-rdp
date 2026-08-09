@@ -52,10 +52,11 @@ Prefer **closing RDP** (disconnect). After **Log Out**, sign in again.
 ```text
 .
 ├── Dockerfile
-├── docker-entrypoint.sh    # DNS fallback, dbus, xrdp
+├── docker-entrypoint.sh    # DNS, dbus, polkitd, xrdp
 ├── startwm.sh              # XFCE + logout watchdog
 ├── reconnectwm.sh
-├── skel/                   # Copied to /etc/skel (xfwm4, .Xclients)
+├── skel/                   # → /etc/skel (xfwm4, .Xclients)
+├── overlay/                # → / (polkit lab rules, autostart)
 ├── GUIDE.md
 └── README.md
 ```
@@ -67,8 +68,9 @@ Prefer **closing RDP** (disconnect). After **Log Out**, sign in again.
 1. **Base:** Azure Linux 4.0 core from MCR  
 2. **dnf:** XFCE, xrdp, xorgxrdp, networking tools (Fedora fill-in for DE packages)  
 3. **skel:** Default user home template  
-4. **User:** `azureuser` with skel applied  
-5. **xrdp:** `startwm.sh` / `reconnectwm.sh`, `KillDisconnected=true`, X11 only  
+4. **overlay:** Polkit lab rules (no PolicyKit popups without logind)  
+5. **User:** `azureuser` with skel applied  
+6. **xrdp:** `startwm.sh` / `reconnectwm.sh`, RFX gfx, X11 only  
 
 ---
 
